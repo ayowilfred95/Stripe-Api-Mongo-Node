@@ -1,6 +1,6 @@
 const express = require('express')
 const router = express.Router()
-const {customerPaymentCheckOut,customerSubscription } = require('../controllers/customerController')
+const {customerPaymentCheckOut,customerSubscription} = require('../controllers/customerController')
 
 // Create a customer and redirect to Stripe checkout
 

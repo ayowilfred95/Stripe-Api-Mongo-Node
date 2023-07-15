@@ -14,10 +14,18 @@ try{
 
     const { email, product } = req.body;
 
+    // create a customer in mongoDB
     const customer = await Customer.create({email,product})
 
+      // Create a customer in Stripe
+      const stripeCustomer = await stripe.customers.create({
+        email: customer.email,
+        description: 'Customers created for stripe product',
+      });
+
+      // create a subscription session with stripe Checkout
     const session = await stripe.checkout.sessions.create({
-        customer: customer._id,
+        customer: stripeCustomer.id,
         payment_method_types: ['card'],
         line_items: [
             {
@@ -29,6 +37,9 @@ try{
         mode: 'payment',
         success_url: 'https://localhost:8000?success=true',
         cancel_url: 'https://localhost:8000?canceled=true',
+        metadata: {
+            customerId: stripeCustomer.id, // Store customer ID as metadata for future reference
+          },
     });
 
     // was looking for data to query
@@ -49,32 +60,50 @@ try{
  */
 // subscribe customer (X) to a stripe product plan P1 (keep id subscription for future db storage) after complete the checkout payment
 const customerSubscription = async (req,res)=>{
-
     try{
+        const sessionId = req.body.session.id;
 
-        // create a customer first
-        const customer = await stripe.customers.create({
-            description: 'Customers created for stripe product',
-          });
-        
-        const subscription = await stripe.subscriptions.create({
-            customer: customer.id,
-            items: [
-              {price: 'price_1NTzaiKPGLOQehLkiNkuQVep'},
-            ],
-          });
+        // Retrieve the checkout session from the stripe
+        const session = await stripe.checkout.sessions.retrieve(sessionId);
 
-           // Store subscription.id in your MongoDB
-    await Customer.collection(customer).insertOne({ subscriptionId: customer.id });
+        if(session.payment_status == 'paid') {
+            //Retrieve customer ID and subscription ID from session metadata
 
-    console.log('Subscription created:', subscription);
+            // Retrieve customer ID from session metadata
+                const customerId = session.metadata.customerId;
+
+         // Attach payment source or set default payment method
+          await stripe.subscriptions.update(
+            customerId,
+            {
+              payment_settings: {
+                payment_method_types: session.payment_method,
+              },
+            }
+          );
+
+            const subscription = await stripe.subscriptions.create({
+                customer:customerId,
+                items: [
+                  {price: 'price_1NTzaiKPGLOQehLkiNkuQVep'},
+                ],
+              });
 
 
+        // Update the customer document in MongoDB with the subscription ID
+        await Customer.findByIdAndUpdate(customerId, { subscriptionId: subscription.id });
+        res.status(200).json({subscription});
+    } else {
+      res.status(400).json({ error: 'Payment not completed for the session' });
+    }
     }catch(error){
-        console.error('Error creating subscription:', error);
-        res.status(500).send('Error creating subscription: ' + error.message);
+        console.log('Error creating subscription:', error);
+        res.status(500).json({ error: error.message });
     }
 }
+
+
+
 
 //  update customer (X) product plan P1 subscription (Switch from plan P1 to plan P2)
 const customerUpdate = async ()=>{
